@@ -19,6 +19,7 @@ const CallSimulatorPage: React.FC = () => {
     const showAlert = riskScore >= SCAM_THRESHOLD && !alertDismissed;
 
     const handleStartCall = async (phone: string) => {
+        console.log('CallSimulatorPage starting call for', phone);
         setPhoneNumber(phone);
         setAlertDismissed(false);
         await startCall(phone);
@@ -35,6 +36,7 @@ const CallSimulatorPage: React.FC = () => {
                     className="absolute top-1/3 left-1/2 -translate-x-1/2 w-[600px] h-[400px] rounded-full blur-3xl transition-colors duration-1000"
                     style={{
                         backgroundColor:
+                            callStatus === 'trusted' ? 'rgba(16,185,129,0.08)' :
                             riskScore >= 70 ? 'rgba(239,68,68,0.06)' :
                                 riskScore >= 40 ? 'rgba(245,158,11,0.06)' :
                                     'rgba(34,197,94,0.04)',

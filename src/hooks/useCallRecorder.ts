@@ -1,6 +1,11 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
+<<<<<<< HEAD
 import type { AnalysisResult, CallStatus, Emotion, VoiceAuthenticity } from '../types';
+=======
+import type { AnalysisResult, CallStatus, Emotion } from '../types';
+import { useTrustedContacts } from './useTrustedContacts';
+>>>>>>> 016f6b1176677f95f8a68e58523455dcb0ac6a0c
 
 const SCAM_KEYWORDS = [
     'bank', 'account', 'blocked', 'arrest', 'police', 'irs', 'tax',
@@ -129,6 +134,7 @@ export interface UseCallRecorderReturn {
 }
 
 export function useCallRecorder(): UseCallRecorderReturn {
+    const { trustedContacts } = useTrustedContacts();
     const [callStatus, setCallStatus] = useState<CallStatus>('idle');
     const [riskScore, setRiskScore] = useState(0);
     const [emotion, setEmotion] = useState<Emotion>('neutral');
@@ -241,9 +247,17 @@ export function useCallRecorder(): UseCallRecorderReturn {
     }, []);
 
     const startCall = useCallback(async (phoneNumber: string) => {
-        if (callStatus === 'active' || callStatus === 'connecting') return;
+        if (callStatus === 'active' || callStatus === 'connecting' || callStatus === 'trusted') return;
 
         isEndingRef.current = false;
+        
+        const isTrusted = trustedContacts.some(c => c.phone_number === phoneNumber);
+        if (isTrusted) {
+            setCallStatus('trusted');
+            setIsRecording(false);
+            return;
+        }
+
         setCallStatus('connecting');
         phoneRef.current = phoneNumber;
         scoreRef.current = 0;
@@ -279,13 +293,21 @@ export function useCallRecorder(): UseCallRecorderReturn {
             // use local id
         }
 
+        if (isEndingRef.current) return;
+
         callIdRef.current = newCallId;
         setCurrentCallId(newCallId);
 
         await new Promise(resolve => setTimeout(resolve, 1200));
 
+        if (isEndingRef.current) return;
+
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            if (isEndingRef.current) {
+                stream.getTracks().forEach(track => track.stop());
+                return;
+            }
             streamRef.current = stream;
 
             if (typeof MediaRecorder !== 'undefined') {
@@ -346,7 +368,7 @@ export function useCallRecorder(): UseCallRecorderReturn {
             }
             void flushMediaChunk();
         }, 7000);
-    }, [callStatus, flushMediaChunk, stopMedia]);
+    }, [callStatus, flushMediaChunk, stopMedia, trustedContacts]);
 
     const endCall = useCallback(async () => {
         if (callStatus === 'idle' || callStatus === 'ended') return;
