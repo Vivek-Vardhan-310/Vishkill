@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
-import type { AnalysisResult, CallStatus, Emotion } from '../types';
+import type { AnalysisResult, CallStatus, Emotion, VoiceAuthenticity } from '../types';
 
 const SCAM_KEYWORDS = [
     'bank', 'account', 'blocked', 'arrest', 'police', 'irs', 'tax',
@@ -76,6 +76,7 @@ async function mockAnalyzeCall(
                     audio_blob: audioBase64,
                     phone_number: phoneNumber,
                     call_id: callId,
+                    current_risk_score: currentScore,
                 },
             });
             if (!error && data) return data as AnalysisResult;
@@ -90,7 +91,27 @@ async function mockAnalyzeCall(
     const riskScore = calculateRiskScore(keywords, emotion, currentScore);
     const status = riskScore >= 70 ? 'scam' : riskScore >= 40 ? 'suspicious' : 'safe';
 
-    return { transcript, emotion, keywords, risk_score: riskScore, status };
+    return {
+        transcript,
+        emotion,
+        keywords,
+        risk_score: riskScore,
+        status,
+        scam_score: Math.min(1, keywords.length * 0.18 + (emotion === 'fear' ? 0.25 : 0)),
+        scam_signals: keywords,
+        voice_authenticity: {
+            label: 'unavailable',
+            score: null,
+            source: null,
+            provider: 'local-fallback',
+        },
+        providers: {
+            transcription: 'web-speech-api',
+            scam_detection: 'local-keyword-rules',
+            emotion_detection: 'local-trigger-rules',
+            voice_detection: 'unavailable',
+        },
+    };
 }
 
 export interface UseCallRecorderReturn {
@@ -101,6 +122,8 @@ export interface UseCallRecorderReturn {
     transcripts: { text: string; timestamp: string; emotion: Emotion }[];
     isRecording: boolean;
     currentCallId: string | null;
+    voiceAuthenticity: VoiceAuthenticity;
+    scamSignals: string[];
     startCall: (phoneNumber: string) => Promise<void>;
     endCall: () => Promise<void>;
 }
@@ -113,6 +136,13 @@ export function useCallRecorder(): UseCallRecorderReturn {
     const [transcripts, setTranscripts] = useState<{ text: string; timestamp: string; emotion: Emotion }[]>([]);
     const [isRecording, setIsRecording] = useState(false);
     const [currentCallId, setCurrentCallId] = useState<string | null>(null);
+    const [voiceAuthenticity, setVoiceAuthenticity] = useState<VoiceAuthenticity>({
+        label: 'unavailable',
+        score: null,
+        source: null,
+        provider: null,
+    });
+    const [scamSignals, setScamSignals] = useState<string[]>([]);
 
     const phoneRef = useRef('');
     const recognitionRef = useRef<SpeechRecognition | null>(null);
@@ -136,6 +166,13 @@ export function useCallRecorder(): UseCallRecorderReturn {
         setRiskScore(result.risk_score);
         setEmotion(result.emotion);
         setKeywords(previous => Array.from(new Set([...previous, ...result.keywords])));
+        setScamSignals(previous => Array.from(new Set([...(result.scam_signals ?? []), ...previous])));
+        setVoiceAuthenticity(result.voice_authenticity ?? {
+            label: 'unavailable',
+            score: null,
+            source: null,
+            provider: null,
+        });
 
         if (text) {
             setTranscripts(previous => [
@@ -214,6 +251,13 @@ export function useCallRecorder(): UseCallRecorderReturn {
         setEmotion('neutral');
         setKeywords([]);
         setTranscripts([]);
+        setScamSignals([]);
+        setVoiceAuthenticity({
+            label: 'unavailable',
+            score: null,
+            source: null,
+            provider: null,
+        });
         bufferRef.current = '';
         mediaChunksRef.current = [];
 
@@ -344,6 +388,8 @@ export function useCallRecorder(): UseCallRecorderReturn {
         transcripts,
         isRecording,
         currentCallId,
+        voiceAuthenticity,
+        scamSignals,
         startCall,
         endCall,
     };

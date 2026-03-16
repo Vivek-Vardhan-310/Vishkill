@@ -52,6 +52,11 @@ create index if not exists idx_calls_phone      on public.calls(phone_number);
 create index if not exists idx_calls_status     on public.calls(status);
 create index if not exists idx_transcripts_call on public.call_transcripts(call_id);
 
+-- Public bucket for temporary audio chunks used by deepfake detection
+insert into storage.buckets (id, name, public)
+values ('call-audio', 'call-audio', true)
+on conflict (id) do nothing;
+
 -- Row Level Security (RLS)
 alter table public.calls            enable row level security;
 alter table public.call_transcripts enable row level security;

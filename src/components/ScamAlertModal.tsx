@@ -1,18 +1,20 @@
 import React, { useState } from 'react';
 import { AlertTriangle, ShieldAlert, PhoneOff, Flag, X } from 'lucide-react';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
+import type { VoiceAuthenticity } from '../types';
 
 interface ScamAlertModalProps {
     riskScore: number;
     phoneNumber: string;
     keywords: string[];
     emotion: string;
+    voiceAuthenticity: VoiceAuthenticity;
     onEndCall: () => void;
     onDismiss: () => void;
 }
 
 const ScamAlertModal: React.FC<ScamAlertModalProps> = ({
-    riskScore, phoneNumber, keywords, emotion, onEndCall, onDismiss,
+    riskScore, phoneNumber, keywords, emotion, voiceAuthenticity, onEndCall, onDismiss,
 }) => {
     const [reported, setReported] = useState(false);
     const [reporting, setReporting] = useState(false);
@@ -107,6 +109,18 @@ const ScamAlertModal: React.FC<ScamAlertModalProps> = ({
                             <div>
                                 <span className="text-gray-400">Emotional manipulation: </span>
                                 <span className="text-yellow-300 font-medium capitalize">{emotion}</span>
+                            </div>
+                        </div>
+                    )}
+                    {voiceAuthenticity.label === 'suspected_ai' && (
+                        <div className="flex items-start gap-3 text-sm">
+                            <AlertTriangle className="w-4 h-4 text-red-400 mt-0.5 shrink-0" />
+                            <div>
+                                <span className="text-gray-400">Voice authenticity warning: </span>
+                                <span className="text-red-300 font-medium">
+                                    Possible AI-generated voice
+                                    {voiceAuthenticity.source ? ` (${voiceAuthenticity.source})` : ''}
+                                </span>
                             </div>
                         </div>
                     )}

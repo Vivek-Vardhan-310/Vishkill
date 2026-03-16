@@ -3,6 +3,14 @@
 export type CallStatus = 'idle' | 'connecting' | 'active' | 'ended';
 export type RiskLevel = 'safe' | 'suspicious' | 'scam';
 export type Emotion = 'neutral' | 'urgency' | 'fear' | 'pressure' | 'aggression';
+export type VoiceAuthenticityLabel = 'human' | 'suspected_ai' | 'unavailable';
+
+export interface VoiceAuthenticity {
+    label: VoiceAuthenticityLabel;
+    score: number | null;
+    source: string | null;
+    provider: string | null;
+}
 
 export interface AnalysisResult {
     transcript: string;
@@ -10,6 +18,16 @@ export interface AnalysisResult {
     keywords: string[];
     risk_score: number;
     status: RiskLevel;
+    scam_score?: number;
+    scam_signals?: string[];
+    emotion_scores?: Partial<Record<Emotion, number>>;
+    voice_authenticity?: VoiceAuthenticity;
+    providers?: {
+        transcription: string;
+        scam_detection: string;
+        emotion_detection: string;
+        voice_detection: string;
+    };
 }
 
 export interface CallRecord {

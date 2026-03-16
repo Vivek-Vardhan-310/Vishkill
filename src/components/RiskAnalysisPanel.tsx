@@ -1,12 +1,14 @@
 import React, { useEffect, useRef } from 'react';
 import { AlertTriangle, TrendingUp, Tag, Brain, FileText } from 'lucide-react';
-import type { Emotion } from '../types';
+import type { Emotion, VoiceAuthenticity } from '../types';
 
 interface RiskAnalysisPanelProps {
     riskScore: number;
     emotion: Emotion;
     keywords: string[];
     transcripts: { text: string; timestamp: string; emotion: Emotion }[];
+    voiceAuthenticity: VoiceAuthenticity;
+    scamSignals: string[];
 }
 
 const EMOTION_CONFIG: Record<Emotion, { label: string; color: string; bg: string }> = {
@@ -112,10 +114,15 @@ const RiskMeter: React.FC<{ score: number }> = ({ score }) => {
 };
 
 const RiskAnalysisPanel: React.FC<RiskAnalysisPanelProps> = ({
-    riskScore, emotion, keywords, transcripts,
+    riskScore, emotion, keywords, transcripts, voiceAuthenticity, scamSignals,
 }) => {
     const transcriptEndRef = useRef<HTMLDivElement>(null);
     const emotionCfg = EMOTION_CONFIG[emotion];
+    const voiceStatus = voiceAuthenticity.label === 'suspected_ai'
+        ? { label: 'Suspected AI Voice', color: 'text-red-400', bg: 'bg-red-500/10 border-red-500/20' }
+        : voiceAuthenticity.label === 'human'
+            ? { label: 'Likely Human Voice', color: 'text-green-400', bg: 'bg-green-500/10 border-green-500/20' }
+            : { label: 'Voice Check Unavailable', color: 'text-gray-400', bg: 'bg-gray-500/10 border-gray-500/20' };
 
     useEffect(() => {
         transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -143,6 +150,23 @@ const RiskAnalysisPanel: React.FC<RiskAnalysisPanelProps> = ({
             </div>
 
             <div className="glass rounded-2xl p-5">
+                <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">
+                    Voice Authenticity
+                </h3>
+                <div className={`rounded-2xl border px-4 py-3 ${voiceStatus.bg}`}>
+                    <div className="flex items-center justify-between gap-3">
+                        <span className={`text-sm font-semibold ${voiceStatus.color}`}>{voiceStatus.label}</span>
+                        <span className="text-xs text-gray-500">
+                            {voiceAuthenticity.score === null ? 'No score' : `${voiceAuthenticity.score}% confidence`}
+                        </span>
+                    </div>
+                    {voiceAuthenticity.source && (
+                        <p className="text-xs text-gray-500 mt-2">Detected source: {voiceAuthenticity.source}</p>
+                    )}
+                </div>
+            </div>
+
+            <div className="glass rounded-2xl p-5">
                 <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3 flex items-center gap-2">
                     <Tag className="w-4 h-4" />
                     Scam Keywords Detected
@@ -163,6 +187,23 @@ const RiskAnalysisPanel: React.FC<RiskAnalysisPanelProps> = ({
                             >
                                 <AlertTriangle className="w-3 h-3" />
                                 {keyword}
+                            </span>
+                        ))}
+                    </div>
+                )}
+            </div>
+
+            <div className="glass rounded-2xl p-5">
+                <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">
+                    Scam Pattern Signals
+                </h3>
+                {scamSignals.length === 0 ? (
+                    <p className="text-sm text-gray-500">No high-confidence scam patterns detected yet.</p>
+                ) : (
+                    <div className="flex flex-wrap gap-2">
+                        {scamSignals.map(signal => (
+                            <span key={signal} className="px-3 py-1 rounded-full bg-yellow-500/15 border border-yellow-500/30 text-yellow-300 text-xs font-medium">
+                                {signal}
                             </span>
                         ))}
                     </div>

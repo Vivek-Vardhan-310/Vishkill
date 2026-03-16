@@ -11,7 +11,7 @@ const SCAM_THRESHOLD = 70;
 const CallSimulatorPage: React.FC = () => {
     const {
         callStatus, riskScore, emotion, keywords, transcripts,
-        isRecording, startCall, endCall,
+        isRecording, startCall, endCall, voiceAuthenticity, scamSignals,
     } = useCallRecorder();
 
     const [phoneNumber, setPhoneNumber] = useState('');
@@ -80,6 +80,8 @@ const CallSimulatorPage: React.FC = () => {
                             emotion={emotion}
                             keywords={keywords}
                             transcripts={transcripts}
+                            voiceAuthenticity={voiceAuthenticity}
+                            scamSignals={scamSignals}
                         />
                     </div>
                 </div>
@@ -91,6 +93,7 @@ const CallSimulatorPage: React.FC = () => {
                     phoneNumber={phoneNumber}
                     keywords={keywords}
                     emotion={emotion}
+                    voiceAuthenticity={voiceAuthenticity}
                     onEndCall={handleEndCall}
                     onDismiss={() => { setAlertDismissed(true); }}
                 />
