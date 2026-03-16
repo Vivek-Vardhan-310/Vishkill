@@ -69,3 +69,6 @@ create policy "Allow anon insert transcripts" on public.call_transcripts for ins
 create policy "Allow anon read reports"   on public.scam_reports for select using (true);
 create policy "Allow anon insert reports" on public.scam_reports for insert with check (true);
 create policy "Allow anon update reports" on public.scam_reports for update using (true);
+
+create policy "Allow anon read trusted_contacts"   on public.trusted_contacts for select using (true);
+create policy "Allow anon insert trusted_contacts" on public.trusted_contacts for insert with check (true);

@@ -1,5 +1,5 @@
 import React from 'react';
-import { PhoneCall, PhoneOff, PhoneMissed, Wifi } from 'lucide-react';
+import { PhoneCall, PhoneOff, PhoneMissed, Wifi, ShieldCheck } from 'lucide-react';
 import type { CallStatus } from '../types';
 
 interface CallStatusBadgeProps {
@@ -34,6 +34,13 @@ const CONFIG = {
         color: 'text-red-400',
         bg: 'bg-red-500/10 border-red-500/20',
         dot: 'bg-red-400',
+    },
+    trusted: {
+        icon: ShieldCheck,
+        label: 'Trusted Contact',
+        color: 'text-emerald-400',
+        bg: 'bg-emerald-500/10 border-emerald-500/20',
+        dot: 'bg-emerald-400',
     },
 } as const;
 

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Phone, Loader2 } from 'lucide-react';
+import { Phone, Loader2, ShieldCheck } from 'lucide-react';
 import type { CallStatus } from '../types';
 
 interface PhoneInputProps {
@@ -11,16 +11,24 @@ interface PhoneInputProps {
 const PhoneInput: React.FC<PhoneInputProps> = ({ callStatus, onStartCall, onEndCall }) => {
     const [phone, setPhone] = useState('');
     const [error, setError] = useState('');
+    const [cooldown, setCooldown] = useState(false);
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
+        if (cooldown) return;
         const cleaned = phone.replace(/\D/g, '');
-        if (cleaned.length < 7) {
-            setError('Please enter a valid phone number.');
+        if (cleaned.length !== 10) {
+            setError('Phone number must be exactly 10 digits.');
             return;
         }
         setError('');
-        onStartCall(phone);
+        onStartCall(cleaned);
+    };
+
+    const handleEndCallClick = () => {
+        setCooldown(true);
+        setTimeout(() => setCooldown(false), 1000);
+        onEndCall();
     };
 
     const isActive = callStatus === 'active' || callStatus === 'connecting';
@@ -40,7 +48,8 @@ const PhoneInput: React.FC<PhoneInputProps> = ({ callStatus, onStartCall, onEndC
                         value={phone}
                         onChange={e => setPhone(e.target.value)}
                         disabled={isActive}
-                        placeholder="+91 98765 43210"
+                        placeholder="98765 43210"
+                        maxLength={10}
                         className={`w-full px-4 py-3 rounded-xl bg-white/5 border text-white placeholder-gray-500 
               focus:outline-none focus:ring-2 focus:ring-green-500/50 transition-all text-lg font-mono
               ${error ? 'border-red-500/50' : 'border-white/10 focus:border-green-500/50'}
@@ -74,11 +83,22 @@ const PhoneInput: React.FC<PhoneInputProps> = ({ callStatus, onStartCall, onEndC
                         <Loader2 className="w-5 h-5 animate-spin" />
                         Connecting...
                     </button>
+                ) : callStatus === 'trusted' ? (
+                    <button
+                        type="button"
+                        onClick={handleEndCallClick}
+                        className="w-full py-3 px-6 rounded-xl font-semibold text-emerald-100 
+              bg-emerald-900/40 border border-emerald-500/30
+              transition-all duration-200 flex items-center justify-center gap-2"
+                    >
+                        <ShieldCheck className="w-5 h-5 text-emerald-400" />
+                        Analysis Disabled
+                    </button>
                 ) : (
                     <button
                         id="end-call-btn"
                         type="button"
-                        onClick={onEndCall}
+                        onClick={handleEndCallClick}
                         className="w-full py-3 px-6 rounded-xl font-semibold text-white 
               bg-gradient-to-r from-red-500 to-rose-600
               hover:from-red-400 hover:to-rose-500
