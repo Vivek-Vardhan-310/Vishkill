@@ -26,18 +26,25 @@ const corsHeaders = {
 };
 
 const SCAM_KEYWORDS = [
-  "bank", "account", "blocked", "arrest", "police", "irs", "tax",
-  "refund", "verify", "social security", "otp", "password", "urgent",
-  "immediately", "credit card", "wire transfer", "gift card", "bitcoin",
-  "suspended", "lawsuit", "warrant", "fraud", "penalty", "overdue",
-  "aadhaar", "pan card", "kyc", "debit", "loan", "court",
+  "bank", "account", "blocked", "closed", "suspended", "frozen",
+  "arrest", "police", "irs", "tax", "court", "lawsuit", "warrant", "legal notice",
+  "refund", "return failed", "return request failed", "cancel failed", "cancellation failed",
+  "verify", "verification", "confirm", "confirmation", "confirm the cancel",
+  "social security", "otp", "one time password", "password", "cvv", "pin",
+  "urgent", "immediately", "right now", "today itself", "final warning",
+  "credit card", "debit card", "wire transfer", "bank transfer", "upi", "wallet",
+  "gift card", "bitcoin", "crypto", "payment link", "processing fee", "service charge",
+  "send money", "pay now", "make payment", "complete payment",
+  "fraud", "penalty", "overdue", "aadhaar", "pan card", "kyc", "loan",
+  "remote access", "screen share", "download app", "install app",
+  "customer care", "cancel subscription", "renewal charge", "account verification",
 ];
 
 const EMOTION_TRIGGERS: Record<Emotion, string[]> = {
-  urgency: ["immediately", "urgent", "now", "today", "deadline", "overdue", "quickly"],
-  fear: ["arrest", "police", "court", "lawsuit", "warrant", "penalty", "jail"],
-  pressure: ["must", "have to", "required", "mandatory", "no choice", "otherwise"],
-  aggression: ["demand", "pay", "fine", "forfeit", "seized", "confiscate"],
+  urgency: ["immediately", "urgent", "now", "right now", "today", "today itself", "deadline", "overdue", "quickly", "final warning"],
+  fear: ["arrest", "police", "court", "lawsuit", "warrant", "penalty", "jail", "legal notice", "account blocked"],
+  pressure: ["must", "have to", "required", "mandatory", "no choice", "otherwise", "confirm now", "verify now", "pay now"],
+  aggression: ["demand", "pay", "fine", "forfeit", "seized", "confiscate", "send money", "make payment"],
   neutral: [],
 };
 
