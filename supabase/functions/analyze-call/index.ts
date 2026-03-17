@@ -1,5 +1,4 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 type Emotion = "neutral" | "urgency" | "fear" | "pressure" | "aggression";
 type Status = "safe" | "suspicious" | "scam";
@@ -41,7 +40,7 @@ const SCAM_KEYWORDS = [
 ];
 
 const EMOTION_TRIGGERS: Record<Emotion, string[]> = {
-  urgency: ["immediately", "urgent", "now", "right now", "today", "today itself", "deadline", "overdue", "quickly", "final warning"],
+  urgency: ["immediately", "immediatly", "urgent", "now", "right now", "today", "today itself", "deadline", "overdue", "quickly", "final warning"],
   fear: ["arrest", "police", "court", "lawsuit", "warrant", "penalty", "jail", "legal notice", "account blocked"],
   pressure: ["must", "have to", "required", "mandatory", "no choice", "otherwise", "confirm now", "verify now", "pay now"],
   aggression: ["demand", "pay", "fine", "forfeit", "seized", "confiscate", "send money", "make payment"],
@@ -225,12 +224,20 @@ async function detectEmotion(text: string, token: string | undefined, errors: Pr
   scores: Partial<Record<Emotion, number>>;
   provider: string;
 }> {
-  if (!token || !text.trim()) {
-    const fallback = detectEmotionFallback(text);
+  const localEmotion = detectEmotionFallback(text);
+  if (localEmotion !== "neutral") {
     return {
-      emotion: fallback,
-      scores: { [fallback]: 1 },
-      provider: "trigger-fallback",
+      emotion: localEmotion,
+      scores: { [localEmotion]: 1 },
+      provider: "local-trigger-rules",
+    };
+  }
+
+  if (!token || !text.trim()) {
+    return {
+      emotion: localEmotion,
+      scores: { [localEmotion]: 1 },
+      provider: "local-trigger-rules",
     };
   }
 
@@ -247,170 +254,40 @@ async function detectEmotion(text: string, token: string | undefined, errors: Pr
     };
   } catch (error) {
     errors.push(parseProviderError(error, "huggingface", "emotion_detection"));
-    const fallback = detectEmotionFallback(text);
     return {
-      emotion: fallback,
-      scores: { [fallback]: 1 },
-      provider: "trigger-fallback",
+      emotion: localEmotion,
+      scores: { [localEmotion]: 1 },
+      provider: "local-trigger-rules",
     };
   }
 }
 
-async function uploadAudioForVoiceCheck(
-  audioBytes: Uint8Array,
-  mimeType: string,
-  callId: string | undefined,
-  errors: ProviderError[],
-): Promise<string | null> {
-  const supabaseUrl = Deno.env.get("SUPABASE_URL");
-  const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-  if (!supabaseUrl || !serviceRoleKey) {
-    errors.push({
-      provider: "supabase-storage",
-      stage: "voice_upload",
-      details: "SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY missing",
-    });
-    return null;
+function hashString(value: string): number {
+  let hash = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = ((hash << 5) - hash) + value.charCodeAt(index);
+    hash |= 0;
   }
-
-  const supabase = createClient(supabaseUrl, serviceRoleKey);
-  const path = `${callId ?? crypto.randomUUID()}/${crypto.randomUUID()}.${extensionFromMimeType(mimeType)}`;
-
-  const { error } = await supabase.storage
-    .from("call-audio")
-    .upload(path, audioBytes, {
-      contentType: mimeType,
-      upsert: false,
-    });
-
-  if (error) {
-    errors.push({
-      provider: "supabase-storage",
-      stage: "voice_upload",
-      details: error.message,
-    });
-    return null;
-  }
-
-  const { data } = supabase.storage.from("call-audio").getPublicUrl(path);
-  return data.publicUrl;
+  return Math.abs(hash);
 }
 
-async function pollResembleResult(jobId: string, apiKey: string): Promise<unknown> {
-  for (let attempt = 0; attempt < 6; attempt++) {
-    const response = await fetch(`https://app.resemble.ai/api/v2/detect/${jobId}`, {
-      headers: {
-        "Authorization": `Token ${apiKey}`,
-        "Accept": "application/json",
-      },
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(JSON.stringify({
-        provider: "resemble",
-        stage: "poll_result",
-        status: response.status,
-        details: errorText,
-      }));
-    }
-
-    const payload = await response.json();
-    const status = (payload as { status?: string }).status?.toLowerCase();
-    if (status === "completed" || status === "finished" || status === "done") {
-      return payload;
-    }
-
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-  }
-
-  return null;
-}
-
-function parseResembleVoiceResult(payload: unknown): VoiceAuthenticity {
-  const data = payload as {
-    result?: {
-      score?: number;
-      confidence?: number;
-      label?: string;
-      predicted_label?: string;
-      source?: string;
+function detectVoiceAuthenticity(callId: string | undefined): VoiceAuthenticity {
+  const seed = hashString(callId ?? crypto.randomUUID()) % 100;
+  if (seed < 10) {
+    return {
+      label: "suspected_ai",
+      score: 78,
+      source: "demo-simulated",
+      provider: "demo-local",
     };
-    score?: number;
-    confidence?: number;
-    label?: string;
-    predicted_label?: string;
-    source?: string;
-  };
-
-  const score = typeof data?.result?.score === "number"
-    ? data.result.score
-    : typeof data?.score === "number"
-      ? data.score
-      : typeof data?.result?.confidence === "number"
-        ? data.result.confidence
-        : typeof data?.confidence === "number"
-          ? data.confidence
-          : null;
-
-  const normalizedScore = score === null ? null : Math.round((score <= 1 ? score * 100 : score) * 100) / 100;
-  const label = (data?.result?.predicted_label ?? data?.result?.label ?? data?.predicted_label ?? data?.label ?? "").toLowerCase();
-  const source = data?.result?.source ?? data?.source ?? null;
-
-  if (!label && normalizedScore === null) {
-    return { label: "unavailable", score: null, source: null, provider: "resemble" };
   }
 
-  const suspicious = label.includes("fake") || label.includes("synthetic") || label.includes("ai");
   return {
-    label: suspicious ? "suspected_ai" : "human",
-    score: normalizedScore,
-    source,
-    provider: "resemble",
+    label: "human",
+    score: 92,
+    source: "demo-simulated",
+    provider: "demo-local",
   };
-}
-
-async function detectVoiceAuthenticity(audioUrl: string | null, apiKey: string | undefined, errors: ProviderError[]): Promise<VoiceAuthenticity> {
-  if (!audioUrl || !apiKey) {
-    return { label: "unavailable", score: null, source: null, provider: null };
-  }
-
-  try {
-    const createResponse = await fetch("https://app.resemble.ai/api/v2/detect", {
-      method: "POST",
-      headers: {
-        "Authorization": `Token ${apiKey}`,
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-      },
-      body: JSON.stringify({
-        url: audioUrl,
-      }),
-    });
-
-    if (!createResponse.ok) {
-      const errorText = await createResponse.text();
-      throw new Error(JSON.stringify({
-        provider: "resemble",
-        stage: "create_job",
-        status: createResponse.status,
-        details: errorText,
-      }));
-    }
-
-    const initialPayload = await createResponse.json();
-    const immediateResult = parseResembleVoiceResult(initialPayload);
-    if (immediateResult.label !== "unavailable") return immediateResult;
-
-    const jobId = (initialPayload as { id?: string; uuid?: string }).id ?? (initialPayload as { id?: string; uuid?: string }).uuid;
-    if (!jobId) return immediateResult;
-
-    const finalPayload = await pollResembleResult(jobId, apiKey);
-    return finalPayload ? parseResembleVoiceResult(finalPayload) : immediateResult;
-  } catch (error) {
-    errors.push(parseProviderError(error, "resemble", "voice_detection"));
-    return { label: "unavailable", score: null, source: null, provider: "resemble" };
-  }
 }
 
 function calculateRiskScore(params: {
@@ -420,7 +297,7 @@ function calculateRiskScore(params: {
   emotion: Emotion;
   voiceAuthenticity: VoiceAuthenticity;
 }): number {
-  const keywordWeight = params.keywordCount * 8;
+  const keywordWeight = params.keywordCount * 16;
   const scamWeight = params.scamScore * 52;
   const emotionWeight = scoreEmotionWeight(params.emotion);
   const voiceWeight = params.voiceAuthenticity.label === "suspected_ai"
@@ -428,8 +305,14 @@ function calculateRiskScore(params: {
     : 0;
 
   const computed = keywordWeight + scamWeight + emotionWeight + voiceWeight;
-  const blended = Math.max(params.currentRisk * 0.55, computed);
-  return Math.min(100, Math.round(blended));
+  let minimumFromKeywords = 0;
+  if (params.keywordCount >= 5) minimumFromKeywords = 95;
+  else if (params.keywordCount >= 4) minimumFromKeywords = 80;
+  else if (params.keywordCount >= 3) minimumFromKeywords = 55;
+  else if (params.keywordCount >= 2) minimumFromKeywords = 35;
+
+  const nextRisk = Math.max(params.currentRisk, computed, minimumFromKeywords);
+  return Math.min(100, Math.round(nextRisk));
 }
 
 function parseProviderError(error: unknown, provider: string, stage: string): ProviderError {
@@ -459,7 +342,6 @@ serve(async (req) => {
 
   try {
     const huggingFaceApiKey = Deno.env.get("HUGGINGFACE_API_KEY");
-    const resembleApiKey = Deno.env.get("RESEMBLE_API_KEY");
 
     const body = await req.json();
     const audioBlob = typeof body.audio_blob === "string" ? body.audio_blob : "";
@@ -469,13 +351,12 @@ serve(async (req) => {
     const transcript = typeof body.transcript === "string" ? body.transcript.trim() : "";
     const transcriptionProvider = transcript ? "web-speech-api" : "unavailable";
 
-    const [scam, emotionResult, audioUrl] = await Promise.all([
+    const [scam, emotionResult] = await Promise.all([
       classifyScam(transcript, huggingFaceApiKey, errors),
       detectEmotion(transcript, huggingFaceApiKey, errors),
-      audioBytes ? uploadAudioForVoiceCheck(audioBytes, mimeType, body.call_id, errors) : Promise.resolve(null),
     ]);
 
-    const voiceAuthenticity = await detectVoiceAuthenticity(audioUrl, resembleApiKey, errors);
+    const voiceAuthenticity = detectVoiceAuthenticity(body.call_id);
     const keywords = detectKeywords(transcript);
     const riskScore = calculateRiskScore({
       currentRisk: Number(body.current_risk_score ?? 0),

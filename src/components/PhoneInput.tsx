@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Phone, Loader2, ShieldCheck } from 'lucide-react';
+import { Phone, Loader2, ShieldCheck, Ban } from 'lucide-react';
 import type { CallStatus } from '../types';
 
 interface PhoneInputProps {
@@ -93,6 +93,17 @@ const PhoneInput: React.FC<PhoneInputProps> = ({ callStatus, onStartCall, onEndC
                     >
                         <ShieldCheck className="w-5 h-5 text-emerald-400" />
                         Analysis Disabled
+                    </button>
+                ) : callStatus === 'blocked' ? (
+                    <button
+                        type="button"
+                        onClick={handleEndCallClick}
+                        className="w-full py-3 px-6 rounded-xl font-semibold text-red-100 
+              bg-red-900/40 border border-red-500/30
+              transition-all duration-200 flex items-center justify-center gap-2"
+                    >
+                        <Ban className="w-5 h-5 text-red-400" />
+                        Number Blocked
                     </button>
                 ) : (
                     <button

@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
-import type { AnalysisResult, CallStatus, Emotion } from '../types';
+import type { AnalysisResult, CallStatus, Emotion, VoiceAuthenticity } from '../types';
 import { useTrustedContacts } from './useTrustedContacts';
 
 const SCAM_KEYWORDS = [
@@ -19,7 +19,7 @@ const SCAM_KEYWORDS = [
 ];
 
 const EMOTION_TRIGGERS: Record<Emotion, string[]> = {
-    urgency: ['immediately', 'urgent', 'now', 'right now', 'today', 'today itself', 'deadline', 'overdue', 'quickly', 'final warning'],
+    urgency: ['immediately', 'immediatly', 'urgent', 'now', 'right now', 'today', 'today itself', 'deadline', 'overdue', 'quickly', 'final warning'],
     fear: ['arrest', 'police', 'court', 'lawsuit', 'warrant', 'penalty', 'jail', 'legal notice', 'account blocked'],
     pressure: ['must', 'have to', 'required', 'mandatory', 'no choice', 'otherwise', 'confirm now', 'verify now', 'pay now'],
     aggression: ['demand', 'pay', 'fine', 'forfeit', 'seized', 'confiscate', 'send money', 'make payment'],
@@ -40,13 +40,62 @@ function detectKeywords(text: string): string[] {
     return SCAM_KEYWORDS.filter(keyword => lower.includes(keyword));
 }
 
+const EMOTION_PRIORITY: Record<Emotion, number> = {
+    neutral: 0,
+    urgency: 1,
+    pressure: 2,
+    aggression: 3,
+    fear: 4,
+};
+
+function getStrongerEmotion(current: Emotion, next: Emotion): Emotion {
+    return EMOTION_PRIORITY[next] >= EMOTION_PRIORITY[current] ? next : current;
+}
+
+function hashString(value: string): number {
+    let hash = 0;
+    for (let index = 0; index < value.length; index += 1) {
+        hash = ((hash << 5) - hash) + value.charCodeAt(index);
+        hash |= 0;
+    }
+    return Math.abs(hash);
+}
+
+function detectVoiceAuthenticityDemo(callId: string): VoiceAuthenticity {
+    const seed = hashString(callId) % 100;
+    if (seed < 10) {
+        return {
+            label: 'suspected_ai',
+            score: 78,
+            source: 'demo-simulated',
+            provider: 'demo-local',
+        };
+    }
+
+    return {
+        label: 'human',
+        score: 92,
+        source: 'demo-simulated',
+        provider: 'demo-local',
+    };
+}
+
 function calculateRiskScore(keywords: string[], emotion: Emotion, base: number): number {
     let score = base;
-    score += keywords.length * 10;
+    score += keywords.length * 15;
     if (emotion === 'urgency') score += 15;
     if (emotion === 'fear') score += 20;
     if (emotion === 'pressure') score += 12;
     if (emotion === 'aggression') score += 18;
+
+    if (keywords.length >= 5) {
+        score = Math.max(score, 100);
+    } else if (keywords.length >= 3) {
+        score = Math.max(score, 90);
+    } else if (keywords.length >= 2) {
+        score = Math.max(score, 70);
+    }
+
     return Math.min(100, Math.max(0, score));
 }
 
@@ -107,40 +156,39 @@ async function mockAnalyzeCall(
         status,
         scam_score: Math.min(1, keywords.length * 0.18 + (emotion === 'fear' ? 0.25 : 0)),
         scam_signals: keywords,
-        voice_authenticity: {
-            label: 'unavailable',
-            score: null,
-            source: null,
-            provider: 'local-fallback',
-        },
+        voice_authenticity: detectVoiceAuthenticityDemo(callId),
         providers: {
             transcription: 'web-speech-api',
             scam_detection: 'local-keyword-rules',
             emotion_detection: 'local-trigger-rules',
-            voice_detection: 'unavailable',
+            voice_detection: 'demo-local',
         },
     };
 }
 
 export interface UseCallRecorderReturn {
     callStatus: CallStatus;
+    blockedReportCount: number | null;
     riskScore: number;
     emotion: Emotion;
+    currentChunkEmotion: Emotion;
     keywords: string[];
     transcripts: { text: string; timestamp: string; emotion: Emotion }[];
     isRecording: boolean;
     currentCallId: string | null;
     voiceAuthenticity: VoiceAuthenticity;
     scamSignals: string[];
-    startCall: (phoneNumber: string) => Promise<void>;
+    startCall: (phoneNumber: string, force?: boolean) => Promise<void>;
     endCall: () => Promise<void>;
 }
 
 export function useCallRecorder(): UseCallRecorderReturn {
     const { trustedContacts } = useTrustedContacts();
     const [callStatus, setCallStatus] = useState<CallStatus>('idle');
+    const [blockedReportCount, setBlockedReportCount] = useState<number | null>(null);
     const [riskScore, setRiskScore] = useState(0);
     const [emotion, setEmotion] = useState<Emotion>('neutral');
+    const [currentChunkEmotion, setCurrentChunkEmotion] = useState<Emotion>('neutral');
     const [keywords, setKeywords] = useState<string[]>([]);
     const [transcripts, setTranscripts] = useState<{ text: string; timestamp: string; emotion: Emotion }[]>([]);
     const [isRecording, setIsRecording] = useState(false);
@@ -157,23 +205,29 @@ export function useCallRecorder(): UseCallRecorderReturn {
     const recognitionRef = useRef<SpeechRecognition | null>(null);
     const callIdRef = useRef<string | null>(null);
     const scoreRef = useRef(0);
+    const keywordsRef = useRef<string[]>([]);
+    const emotionRef = useRef<Emotion>('neutral');
     const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const bufferRef = useRef('');
+    const interimBufferRef = useRef('');
     const mediaRecorderRef = useRef<MediaRecorder | null>(null);
     const mediaChunksRef = useRef<Blob[]>([]);
     const streamRef = useRef<MediaStream | null>(null);
     const isEndingRef = useRef(false);
 
     const processBuffer = useCallback(async (audioBlob?: Blob | null) => {
-        const text = bufferRef.current.trim();
+        const text = `${bufferRef.current} ${interimBufferRef.current}`.trim();
         if ((!text && !audioBlob) || !callIdRef.current) return;
         bufferRef.current = '';
+        interimBufferRef.current = '';
 
         const result = await mockAnalyzeCall(text, phoneRef.current, callIdRef.current, scoreRef.current, audioBlob);
         scoreRef.current = result.risk_score;
+        emotionRef.current = getStrongerEmotion(emotionRef.current, result.emotion);
 
         setRiskScore(result.risk_score);
-        setEmotion(result.emotion);
+        setCurrentChunkEmotion(result.emotion);
+        setEmotion(emotionRef.current);
         setKeywords(previous => Array.from(new Set([...previous, ...result.keywords])));
         setScamSignals(previous => Array.from(new Set([...(result.scam_signals ?? []), ...previous])));
         setVoiceAuthenticity(result.voice_authenticity ?? {
@@ -204,9 +258,10 @@ export function useCallRecorder(): UseCallRecorderReturn {
 
         try {
             if (!isSupabaseConfigured || !callIdRef.current || callIdRef.current.startsWith('local-')) return;
+            const status = result.risk_score >= 70 ? 'scam' : result.risk_score >= 40 ? 'suspicious' : 'safe';
             await supabase.from('calls').update({
                 risk_score: result.risk_score,
-                status: result.status,
+                status: status,
             }).eq('id', callIdRef.current);
         } catch {
             // non-blocking
@@ -249,7 +304,7 @@ export function useCallRecorder(): UseCallRecorderReturn {
         }
     }, []);
 
-    const startCall = useCallback(async (phoneNumber: string) => {
+    const startCall = useCallback(async (phoneNumber: string, force = false) => {
         if (callStatus === 'active' || callStatus === 'connecting' || callStatus === 'trusted') return;
 
         isEndingRef.current = false;
@@ -261,11 +316,34 @@ export function useCallRecorder(): UseCallRecorderReturn {
             return;
         }
 
+        if (isSupabaseConfigured && !force) {
+            try {
+                const { data } = await supabase
+                    .from('scam_reports')
+                    .select('report_count')
+                    .eq('phone_number', phoneNumber)
+                    .single();
+                
+                if (data && data.report_count > 0) {
+                    setBlockedReportCount(data.report_count);
+                    setCallStatus('blocked');
+                    setIsRecording(false);
+                    return;
+                }
+            } catch {
+                // Ignore error, likely no rows found
+            }
+        }
+
         setCallStatus('connecting');
         phoneRef.current = phoneNumber;
         scoreRef.current = 0;
+        keywordsRef.current = [];
+        emotionRef.current = 'neutral';
+        
         setRiskScore(0);
         setEmotion('neutral');
+        setCurrentChunkEmotion('neutral');
         setKeywords([]);
         setTranscripts([]);
         setScamSignals([]);
@@ -276,6 +354,7 @@ export function useCallRecorder(): UseCallRecorderReturn {
             provider: null,
         });
         bufferRef.current = '';
+        interimBufferRef.current = '';
         mediaChunksRef.current = [];
 
         let newCallId = `local-${Date.now()}`;
@@ -337,10 +416,25 @@ export function useCallRecorder(): UseCallRecorderReturn {
             recognition.interimResults = true;
             recognition.lang = 'en-US';
             recognition.onresult = (event: SpeechRecognitionEvent) => {
-                const latest = event.results[event.results.length - 1];
-                if (latest?.isFinal) {
-                    bufferRef.current += ` ${latest[0].transcript}`;
+                let finalizedText = '';
+                let interimText = '';
+
+                for (let index = event.resultIndex; index < event.results.length; index += 1) {
+                    const result = event.results[index];
+                    const transcript = result?.[0]?.transcript?.trim();
+                    if (!transcript) continue;
+
+                    if (result.isFinal) {
+                        finalizedText += ` ${transcript}`;
+                    } else {
+                        interimText += ` ${transcript}`;
+                    }
                 }
+
+                if (finalizedText) {
+                    bufferRef.current += finalizedText;
+                }
+                interimBufferRef.current = interimText.trim();
             };
             recognition.onerror = () => {
                 // ignore recognition errors in demo mode
@@ -370,7 +464,7 @@ export function useCallRecorder(): UseCallRecorderReturn {
                 mediaRecorderRef.current.requestData();
             }
             void flushMediaChunk();
-        }, 7000);
+        }, 5000);
     }, [callStatus, flushMediaChunk, stopMedia, trustedContacts]);
 
     const endCall = useCallback(async () => {
@@ -407,8 +501,10 @@ export function useCallRecorder(): UseCallRecorderReturn {
 
     return {
         callStatus,
+        blockedReportCount,
         riskScore,
         emotion,
+        currentChunkEmotion,
         keywords,
         transcripts,
         isRecording,

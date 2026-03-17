@@ -4,13 +4,14 @@ import CallStatusBadge from '../components/CallStatusBadge';
 import MicIndicator from '../components/MicIndicator';
 import RiskAnalysisPanel from '../components/RiskAnalysisPanel';
 import ScamAlertModal from '../components/ScamAlertModal';
+import BlockedNumberModal from '../components/BlockedNumberModal';
 import { useCallRecorder } from '../hooks/useCallRecorder';
 
 const SCAM_THRESHOLD = 70;
 
 const CallSimulatorPage: React.FC = () => {
     const {
-        callStatus, riskScore, emotion, keywords, transcripts,
+        callStatus, blockedReportCount, riskScore, emotion, currentChunkEmotion, keywords, transcripts,
         isRecording, startCall, endCall, voiceAuthenticity, scamSignals,
     } = useCallRecorder();
 
@@ -27,6 +28,11 @@ const CallSimulatorPage: React.FC = () => {
 
     const handleEndCall = async () => {
         await endCall();
+    };
+
+    const handleContinueBlockedCall = async () => {
+        setAlertDismissed(false);
+        await startCall(phoneNumber, true);
     };
 
     return (
@@ -80,6 +86,7 @@ const CallSimulatorPage: React.FC = () => {
                         <RiskAnalysisPanel
                             riskScore={riskScore}
                             emotion={emotion}
+                            currentChunkEmotion={currentChunkEmotion}
                             keywords={keywords}
                             transcripts={transcripts}
                             voiceAuthenticity={voiceAuthenticity}
@@ -98,6 +105,14 @@ const CallSimulatorPage: React.FC = () => {
                     voiceAuthenticity={voiceAuthenticity}
                     onEndCall={handleEndCall}
                     onDismiss={() => { setAlertDismissed(true); }}
+                />
+            )}
+
+            {callStatus === 'blocked' && blockedReportCount !== null && (
+                <BlockedNumberModal
+                    reportCount={blockedReportCount}
+                    onDismiss={handleEndCall}
+                    onContinue={handleContinueBlockedCall}
                 />
             )}
         </div>

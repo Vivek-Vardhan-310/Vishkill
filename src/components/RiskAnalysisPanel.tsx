@@ -5,6 +5,7 @@ import type { Emotion, VoiceAuthenticity } from '../types';
 interface RiskAnalysisPanelProps {
     riskScore: number;
     emotion: Emotion;
+    currentChunkEmotion: Emotion;
     keywords: string[];
     transcripts: { text: string; timestamp: string; emotion: Emotion }[];
     voiceAuthenticity: VoiceAuthenticity;
@@ -114,10 +115,11 @@ const RiskMeter: React.FC<{ score: number }> = ({ score }) => {
 };
 
 const RiskAnalysisPanel: React.FC<RiskAnalysisPanelProps> = ({
-    riskScore, emotion, keywords, transcripts, voiceAuthenticity, scamSignals,
+    riskScore, emotion, currentChunkEmotion, keywords, transcripts, voiceAuthenticity, scamSignals,
 }) => {
     const transcriptEndRef = useRef<HTMLDivElement>(null);
-    const emotionCfg = EMOTION_CONFIG[emotion];
+    const highestEmotionCfg = EMOTION_CONFIG[emotion];
+    const currentEmotionCfg = EMOTION_CONFIG[currentChunkEmotion];
     const voiceStatus = voiceAuthenticity.label === 'suspected_ai'
         ? { label: 'Suspected AI Voice', color: 'text-red-400', bg: 'bg-red-500/10 border-red-500/20' }
         : voiceAuthenticity.label === 'human'
@@ -143,9 +145,21 @@ const RiskAnalysisPanel: React.FC<RiskAnalysisPanelProps> = ({
                     <Brain className="w-4 h-4" />
                     Detected Emotion
                 </h3>
-                <div className={`inline-flex items-center gap-2 px-4 py-2 rounded-full border text-sm font-semibold ${emotionCfg.bg} ${emotionCfg.color}`}>
-                    <span className="w-2 h-2 rounded-full bg-current" />
-                    {emotionCfg.label}
+                <div className="flex flex-wrap gap-3">
+                    <div className="min-w-[180px]">
+                        <p className="text-[11px] uppercase tracking-wider text-gray-500 mb-2">Current Chunk</p>
+                        <div className={`inline-flex items-center gap-2 px-4 py-2 rounded-full border text-sm font-semibold ${currentEmotionCfg.bg} ${currentEmotionCfg.color}`}>
+                            <span className="w-2 h-2 rounded-full bg-current" />
+                            {currentEmotionCfg.label}
+                        </div>
+                    </div>
+                    <div className="min-w-[180px]">
+                        <p className="text-[11px] uppercase tracking-wider text-gray-500 mb-2">Highest In Call</p>
+                        <div className={`inline-flex items-center gap-2 px-4 py-2 rounded-full border text-sm font-semibold ${highestEmotionCfg.bg} ${highestEmotionCfg.color}`}>
+                            <span className="w-2 h-2 rounded-full bg-current" />
+                            {highestEmotionCfg.label}
+                        </div>
+                    </div>
                 </div>
             </div>
 
