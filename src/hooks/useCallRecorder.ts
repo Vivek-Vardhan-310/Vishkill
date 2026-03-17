@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
-import type { AnalysisResult, CallStatus, Emotion } from '../types';
+import { addNativeScamMonitorListener, isNativeScamMonitorAvailable, ScamMonitor } from '../lib/scamMonitor';
+import type { CallStatus, DetectedLanguage, Emotion } from '../types';
 
 const SCAM_KEYWORDS = [
     'bank', 'account', 'blocked', 'arrest', 'police', 'irs', 'tax',
@@ -10,6 +11,19 @@ const SCAM_KEYWORDS = [
     'aadhaar', 'pan card', 'kyc', 'debit', 'loan', 'court',
 ];
 
+const TELUGU_TO_ENGLISH_KEYWORDS: Record<string, string> = {
+    బ్యాంక్: 'bank',
+    ఖాతా: 'account',
+    అరెస్ట్: 'arrest',
+    పోలీసులు: 'police',
+    పాస్వర్డ్: 'password',
+    ఓటీపీ: 'otp',
+    అత్యవసరం: 'urgent',
+    మోసం: 'fraud',
+    కోర్టు: 'court',
+    రుణం: 'loan',
+};
+
 const EMOTION_TRIGGERS: Record<Emotion, string[]> = {
     urgency: ['immediately', 'urgent', 'now', 'today', 'deadline', 'overdue', 'quickly'],
     fear: ['arrest', 'police', 'court', 'lawsuit', 'warrant', 'penalty', 'jail'],
@@ -17,6 +31,25 @@ const EMOTION_TRIGGERS: Record<Emotion, string[]> = {
     aggression: ['demand', 'pay', 'fine', 'forfeit', 'seized', 'confiscate'],
     neutral: [],
 };
+
+function detectLanguage(text: string): DetectedLanguage {
+    if (/[\u0C00-\u0C7F]/.test(text)) return 'telugu';
+    if (/[a-z]/i.test(text)) return 'english';
+    return 'unknown';
+}
+
+function translateTeluguKeywords(text: string): string {
+    return Object.entries(TELUGU_TO_ENGLISH_KEYWORDS).reduce(
+        (translated, [source, target]) => translated.replaceAll(source, target),
+        text,
+    );
+}
+
+function getAnalysisText(transcript: string, translatedText: string | null, language: DetectedLanguage): string {
+    if (translatedText?.trim()) return translatedText;
+    if (language === 'telugu') return translateTeluguKeywords(transcript);
+    return transcript;
+}
 
 function detectEmotion(text: string): Emotion {
     const lower = text.toLowerCase();
@@ -42,63 +75,14 @@ function calculateRiskScore(keywords: string[], emotion: Emotion, base: number):
     return Math.min(100, Math.max(0, score));
 }
 
-async function blobToBase64(blob: Blob): Promise<string> {
-    const buffer = await blob.arrayBuffer();
-    let binary = '';
-    const bytes = new Uint8Array(buffer);
-    const chunkSize = 0x8000;
-
-    for (let index = 0; index < bytes.length; index += chunkSize) {
-        const chunk = bytes.subarray(index, index + chunkSize);
-        binary += String.fromCharCode(...chunk);
-    }
-
-    return btoa(binary);
-}
-
-function getSpeechRecognition(): SpeechRecognitionConstructor | null {
-    return window.SpeechRecognition ?? window.webkitSpeechRecognition ?? null;
-}
-
-async function mockAnalyzeCall(
-    transcript: string,
-    phoneNumber: string,
-    callId: string,
-    currentScore: number,
-    audioBlob?: Blob | null,
-): Promise<AnalysisResult> {
-    try {
-        if (isSupabaseConfigured) {
-            const audioBase64 = audioBlob ? await blobToBase64(audioBlob) : undefined;
-            const { data, error } = await supabase.functions.invoke('analyze-call', {
-                body: {
-                    transcript,
-                    audio_blob: audioBase64,
-                    phone_number: phoneNumber,
-                    call_id: callId,
-                },
-            });
-            if (!error && data) return data as AnalysisResult;
-        }
-    } catch {
-        // fall through to local mock
-    }
-
-    await new Promise(resolve => setTimeout(resolve, 400));
-    const keywords = detectKeywords(transcript);
-    const emotion = detectEmotion(transcript);
-    const riskScore = calculateRiskScore(keywords, emotion, currentScore);
-    const status = riskScore >= 70 ? 'scam' : riskScore >= 40 ? 'suspicious' : 'safe';
-
-    return { transcript, emotion, keywords, risk_score: riskScore, status };
-}
-
 export interface UseCallRecorderReturn {
     callStatus: CallStatus;
     riskScore: number;
+    spamProbability: number | null;
     emotion: Emotion;
+    detectedLanguage: DetectedLanguage;
     keywords: string[];
-    transcripts: { text: string; timestamp: string; emotion: Emotion }[];
+    transcripts: { text: string; translatedText: string | null; detectedLanguage: DetectedLanguage; timestamp: string; emotion: Emotion; spamProbability?: number | null }[];
     isRecording: boolean;
     currentCallId: string | null;
     startCall: (phoneNumber: string) => Promise<void>;
@@ -106,213 +90,112 @@ export interface UseCallRecorderReturn {
 }
 
 export function useCallRecorder(): UseCallRecorderReturn {
+    const nativeMonitoringAvailable = isNativeScamMonitorAvailable();
     const [callStatus, setCallStatus] = useState<CallStatus>('idle');
     const [riskScore, setRiskScore] = useState(0);
+    const [spamProbability, setSpamProbability] = useState<number | null>(null);
     const [emotion, setEmotion] = useState<Emotion>('neutral');
+    const [detectedLanguage, setDetectedLanguage] = useState<DetectedLanguage>('unknown');
     const [keywords, setKeywords] = useState<string[]>([]);
-    const [transcripts, setTranscripts] = useState<{ text: string; timestamp: string; emotion: Emotion }[]>([]);
+    const [transcripts, setTranscripts] = useState<{ text: string; translatedText: string | null; detectedLanguage: DetectedLanguage; timestamp: string; emotion: Emotion; spamProbability?: number | null }[]>([]);
     const [isRecording, setIsRecording] = useState(false);
     const [currentCallId, setCurrentCallId] = useState<string | null>(null);
 
     const phoneRef = useRef('');
-    const recognitionRef = useRef<SpeechRecognition | null>(null);
     const callIdRef = useRef<string | null>(null);
     const scoreRef = useRef(0);
-    const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-    const bufferRef = useRef('');
-    const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-    const mediaChunksRef = useRef<Blob[]>([]);
-    const streamRef = useRef<MediaStream | null>(null);
-    const isEndingRef = useRef(false);
 
-    const processBuffer = useCallback(async (audioBlob?: Blob | null) => {
-        const text = bufferRef.current.trim();
-        if ((!text && !audioBlob) || !callIdRef.current) return;
-        bufferRef.current = '';
+    const handleNativeAnalysis = useCallback((result: {
+        transcript?: string;
+        translatedText?: string | null;
+        detectedLanguage?: string;
+        emotion?: string;
+        keywords?: string[];
+        riskScore?: number;
+        spamProbability?: number;
+        timestamp?: string;
+    }) => {
+        const transcript = result.transcript ?? '';
+        const lang = (result.detectedLanguage as DetectedLanguage | undefined) ?? detectLanguage(transcript);
+        const translatedText = result.translatedText ?? null;
+        const analysisText = getAnalysisText(transcript, translatedText, lang);
+        const emo = (result.emotion as Emotion | undefined) ?? detectEmotion(analysisText);
+        const kws = result.keywords?.length ? result.keywords : detectKeywords(analysisText);
+        const risk = result.riskScore ?? calculateRiskScore(kws, emo, scoreRef.current);
 
-        const result = await mockAnalyzeCall(text, phoneRef.current, callIdRef.current, scoreRef.current, audioBlob);
-        scoreRef.current = result.risk_score;
+        scoreRef.current = risk;
+        setRiskScore(risk);
+        setSpamProbability(result.spamProbability ?? null);
+        setEmotion(emo);
+        setDetectedLanguage(lang);
+        setKeywords(prev => Array.from(new Set([...prev, ...kws])));
 
-        setRiskScore(result.risk_score);
-        setEmotion(result.emotion);
-        setKeywords(previous => Array.from(new Set([...previous, ...result.keywords])));
-
-        if (text) {
-            setTranscripts(previous => [
-                ...previous,
-                { text, timestamp: new Date().toISOString(), emotion: result.emotion },
+        if (transcript) {
+            setTranscripts(prev => [
+                ...prev,
+                {
+                    text: transcript,
+                    translatedText,
+                    detectedLanguage: lang,
+                    timestamp: result.timestamp ?? new Date().toISOString(),
+                    emotion: emo,
+                    spamProbability: result.spamProbability ?? null,
+                },
             ]);
-        }
-
-        try {
-            if (!isSupabaseConfigured || !text || !callIdRef.current || callIdRef.current.startsWith('local-')) return;
-            await supabase.from('call_transcripts').insert({
-                call_id: callIdRef.current,
-                text,
-                timestamp: new Date().toISOString(),
-                emotion: result.emotion,
-            });
-        } catch {
-            // non-blocking
-        }
-
-        try {
-            if (!isSupabaseConfigured || !callIdRef.current || callIdRef.current.startsWith('local-')) return;
-            await supabase.from('calls').update({
-                risk_score: result.risk_score,
-                status: result.status,
-            }).eq('id', callIdRef.current);
-        } catch {
-            // non-blocking
-        }
-    }, []);
-
-    const flushMediaChunk = useCallback(async () => {
-        const blobParts = mediaChunksRef.current;
-        if (blobParts.length === 0) {
-            await processBuffer(null);
-            return;
-        }
-
-        const audioBlob = new Blob(blobParts, {
-            type: mediaRecorderRef.current?.mimeType || 'audio/webm',
-        });
-        mediaChunksRef.current = [];
-        await processBuffer(audioBlob);
-    }, [processBuffer]);
-
-    const stopMedia = useCallback(() => {
-        if (recognitionRef.current) {
-            recognitionRef.current.stop();
-            recognitionRef.current = null;
-        }
-        if (intervalRef.current) {
-            clearInterval(intervalRef.current);
-            intervalRef.current = null;
-        }
-        if (mediaRecorderRef.current) {
-            if (mediaRecorderRef.current.state === 'recording') {
-                mediaRecorderRef.current.requestData();
-                mediaRecorderRef.current.stop();
-            }
-            mediaRecorderRef.current = null;
-        }
-        if (streamRef.current) {
-            streamRef.current.getTracks().forEach(track => track.stop());
-            streamRef.current = null;
         }
     }, []);
 
     const startCall = useCallback(async (phoneNumber: string) => {
         if (callStatus === 'active' || callStatus === 'connecting') return;
 
-        isEndingRef.current = false;
         setCallStatus('connecting');
         phoneRef.current = phoneNumber;
         scoreRef.current = 0;
         setRiskScore(0);
+        setSpamProbability(null);
         setEmotion('neutral');
+        setDetectedLanguage('unknown');
         setKeywords([]);
         setTranscripts([]);
-        bufferRef.current = '';
-        mediaChunksRef.current = [];
 
-        let newCallId = `local-${Date.now()}`;
-        try {
-            if (!isSupabaseConfigured) throw new Error('Supabase not configured');
-            const { data } = await supabase
-                .from('calls')
-                .insert({
-                    phone_number: phoneNumber,
-                    start_time: new Date().toISOString(),
-                    risk_score: 0,
-                    status: 'safe',
-                })
-                .select('id')
-                .single();
-            if (data?.id) newCallId = data.id;
-        } catch {
-            // use local id
-        }
-
+        const newCallId = `local-${Date.now()}`;
         callIdRef.current = newCallId;
         setCurrentCallId(newCallId);
 
         await new Promise(resolve => setTimeout(resolve, 1200));
 
         try {
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            streamRef.current = stream;
-
-            if (typeof MediaRecorder !== 'undefined') {
-                const recorder = new MediaRecorder(stream);
-                recorder.ondataavailable = (event: BlobEvent) => {
-                    if (event.data.size > 0) {
-                        mediaChunksRef.current.push(event.data);
-                    }
-                };
-                mediaRecorderRef.current = recorder;
-                recorder.start();
+            const permissionResult = await ScamMonitor.requestPermissions();
+            if (!permissionResult.granted) {
+                setCallStatus('ended');
+                setIsRecording(false);
+                return;
             }
+            await ScamMonitor.requestOverlayPermission();
+            await ScamMonitor.startMonitoring({
+                phoneNumber,
+                callId: newCallId,
+                alertThreshold: 70,
+            });
+            setCallStatus('active');
+            setIsRecording(true);
         } catch {
-            stopMedia();
-            setIsRecording(false);
             setCallStatus('ended');
-            return;
+            setIsRecording(false);
         }
-
-        const SpeechRecognition = getSpeechRecognition();
-        if (SpeechRecognition) {
-            const recognition = new SpeechRecognition();
-            recognition.continuous = true;
-            recognition.interimResults = true;
-            recognition.lang = 'en-US';
-            recognition.onresult = (event: SpeechRecognitionEvent) => {
-                const latest = event.results[event.results.length - 1];
-                if (latest?.isFinal) {
-                    bufferRef.current += ` ${latest[0].transcript}`;
-                }
-            };
-            recognition.onerror = () => {
-                // ignore recognition errors in demo mode
-            };
-            recognition.onend = () => {
-                if (!isEndingRef.current) {
-                    try {
-                        recognition.start();
-                    } catch {
-                        // ignore restart errors
-                    }
-                }
-            };
-            try {
-                recognition.start();
-                recognitionRef.current = recognition;
-            } catch {
-                // continue without speech recognition
-            }
-        }
-
-        setCallStatus('active');
-        setIsRecording(true);
-
-        intervalRef.current = setInterval(() => {
-            if (mediaRecorderRef.current?.state === 'recording') {
-                mediaRecorderRef.current.requestData();
-            }
-            void flushMediaChunk();
-        }, 7000);
-    }, [callStatus, flushMediaChunk, stopMedia]);
+    }, [callStatus]);
 
     const endCall = useCallback(async () => {
         if (callStatus === 'idle' || callStatus === 'ended') return;
 
-        isEndingRef.current = true;
         setCallStatus('ended');
         setIsRecording(false);
-        stopMedia();
 
-        await flushMediaChunk();
+        try {
+            await ScamMonitor.stopMonitoring();
+        } catch {
+            // ignore
+        }
 
         const finalScore = scoreRef.current;
         const finalStatus = finalScore >= 70 ? 'scam' : finalScore >= 40 ? 'suspicious' : 'safe';
@@ -327,19 +210,57 @@ export function useCallRecorder(): UseCallRecorderReturn {
         } catch {
             // non-blocking
         }
-    }, [callStatus, flushMediaChunk, stopMedia]);
+    }, [callStatus]);
 
     useEffect(() => {
+        if (!nativeMonitoringAvailable) return;
+
+        const removers = [
+            addNativeScamMonitorListener('CALL_STARTED', () => {
+                setCallStatus('active');
+                setIsRecording(true);
+            }),
+            addNativeScamMonitorListener('CALL_ENDED', () => {
+                setCallStatus('ended');
+                setIsRecording(false);
+            }),
+            addNativeScamMonitorListener('TRANSCRIPT_UPDATE', (event) => {
+                handleNativeAnalysis({
+                    transcript: event.transcript,
+                    translatedText: event.translatedText ?? null,
+                    detectedLanguage: event.detectedLanguage,
+                    emotion: event.emotion,
+                    keywords: event.keywords,
+                    riskScore: event.riskScore,
+                    spamProbability: event.spamProbability,
+                    timestamp: event.timestamp,
+                });
+            }),
+            addNativeScamMonitorListener('SCAM_ALERT', (event) => {
+                handleNativeAnalysis({
+                    transcript: event.transcript,
+                    translatedText: event.translatedText ?? null,
+                    detectedLanguage: event.detectedLanguage,
+                    emotion: event.emotion,
+                    keywords: event.keywords,
+                    riskScore: event.riskScore,
+                    spamProbability: event.spamProbability,
+                    timestamp: event.timestamp,
+                });
+            }),
+        ];
+
         return () => {
-            isEndingRef.current = true;
-            stopMedia();
+            removers.forEach(remove => remove());
         };
-    }, [stopMedia]);
+    }, [handleNativeAnalysis, nativeMonitoringAvailable]);
 
     return {
         callStatus,
         riskScore,
+        spamProbability,
         emotion,
+        detectedLanguage,
         keywords,
         transcripts,
         isRecording,

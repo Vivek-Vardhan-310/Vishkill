@@ -7,18 +7,82 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-node_modules
-dist
-dist-ssr
+# Dependencies
+node_modules/
+.yarn/cache/
+
+# Build outputs
+dist/
+dist-ssr/
+build/
+
+# Environment
+.env
+.env.*
+!.env.example
 *.local
+
+# Python
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+*.whl
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+dist/
+build/
+local-asr-service/.venv/
+local-asr-service/.hf-cache/
+local-asr-service/__pycache__/
+
+# Caches & Temporary
+.hf-cache/
+.gradle/
+.cache/
+
+# Third-party source (use git submodule instead)
+third_party/
+
+# Android whisper model binaries
+android/app/src/main/assets/whisper-models/
+
+# Android generated/runtime files
+android/app/src/main/res/xml/network_security_config.xml
+
+# Runtime files
+local-asr-service/.server.pid
+
+# Android / Capacitor generated files
+android/.gradle/
+android/build/
+android/app/build/
+android/capacitor-cordova-android-plugins/build/
+android/local.properties
+*.apk
+*.aab
 
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
-.idea
+.idea/
+*.sublime-project
+*.sublime-workspace
 .DS_Store
+.AppleDouble
+.LSOverride
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
 *.sw?
+*~
+
+# OS
+Thumbs.db
+.DS_Store

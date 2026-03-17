@@ -25,6 +25,8 @@ create table if not exists public.call_transcripts (
   id        uuid primary key default gen_random_uuid(),
   call_id   uuid not null references public.calls(id) on delete cascade,
   text      text not null,
+  translated_text text,
+  detected_language text not null default 'unknown' check (detected_language in ('english', 'telugu', 'unknown')),
   timestamp timestamptz not null default now(),
   emotion   text not null default 'neutral' check (emotion in ('neutral', 'urgency', 'fear', 'pressure', 'aggression'))
 );

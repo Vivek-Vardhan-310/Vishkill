@@ -1,5 +1,5 @@
 import React from 'react';
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { HashRouter, Routes, Route } from 'react-router-dom';
 import Navbar from './components/Navbar';
 import LandingPage from './pages/LandingPage';
 import CallSimulatorPage from './pages/CallSimulatorPage';
@@ -7,7 +7,7 @@ import CallHistoryPage from './pages/CallHistoryPage';
 
 const App: React.FC = () => {
   return (
-    <BrowserRouter>
+    <HashRouter>
       <div className="min-h-screen bg-gray-950">
         <Navbar />
         <Routes>
@@ -16,7 +16,7 @@ const App: React.FC = () => {
           <Route path="/history" element={<CallHistoryPage />} />
         </Routes>
       </div>
-    </BrowserRouter>
+    </HashRouter>
   );
 };
 

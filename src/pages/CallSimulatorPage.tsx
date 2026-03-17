@@ -10,7 +10,7 @@ const SCAM_THRESHOLD = 70;
 
 const CallSimulatorPage: React.FC = () => {
     const {
-        callStatus, riskScore, emotion, keywords, transcripts,
+        callStatus, riskScore, spamProbability, emotion, detectedLanguage, keywords, transcripts,
         isRecording, startCall, endCall,
     } = useCallRecorder();
 
@@ -66,9 +66,9 @@ const CallSimulatorPage: React.FC = () => {
                         <div className="glass rounded-2xl p-5 border border-yellow-500/10">
                             <p className="text-xs font-semibold text-yellow-400 uppercase tracking-wider mb-3">Demo Tips</p>
                             <ul className="text-xs text-gray-400 space-y-2">
-                                <li className="flex gap-2"><span className="text-yellow-500 mt-0.5">*</span> Say scam phrases like <em className="text-gray-300">&quot;your bank account is blocked&quot;</em></li>
-                                <li className="flex gap-2"><span className="text-yellow-500 mt-0.5">*</span> Try <em className="text-gray-300">&quot;urgent warrant arrest police&quot;</em> for max risk</li>
-                                <li className="flex gap-2"><span className="text-yellow-500 mt-0.5">*</span> Analysis runs every 7 seconds automatically</li>
+                                <li className="flex gap-2"><span className="text-yellow-500 mt-0.5">*</span> Speak in English for the best transcript quality in the current offline build</li>
+                                <li className="flex gap-2"><span className="text-yellow-500 mt-0.5">*</span> Telugu transcription is currently disabled in the mobile app</li>
+                                <li className="flex gap-2"><span className="text-yellow-500 mt-0.5">*</span> Analysis runs every few seconds from live audio chunks</li>
                                 <li className="flex gap-2"><span className="text-yellow-500 mt-0.5">*</span> Risk score above 70 triggers the scam alert</li>
                             </ul>
                         </div>
@@ -77,7 +77,9 @@ const CallSimulatorPage: React.FC = () => {
                     <div className="lg:col-span-3">
                         <RiskAnalysisPanel
                             riskScore={riskScore}
+                            spamProbability={spamProbability}
                             emotion={emotion}
+                            detectedLanguage={detectedLanguage}
                             keywords={keywords}
                             transcripts={transcripts}
                         />
