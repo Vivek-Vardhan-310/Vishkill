@@ -35,11 +35,20 @@ function detectKeywords(text: string): string[] {
 
 function calculateRiskScore(keywords: string[], emotion: Emotion, base: number): number {
     let score = base;
-    score += keywords.length * 10;
+    score += keywords.length * 15;
     if (emotion === 'urgency') score += 15;
     if (emotion === 'fear') score += 20;
     if (emotion === 'pressure') score += 12;
     if (emotion === 'aggression') score += 18;
+
+    if (keywords.length >= 5) {
+        score = Math.max(score, 100);
+    } else if (keywords.length >= 3) {
+        score = Math.max(score, 90);
+    } else if (keywords.length >= 2) {
+        score = Math.max(score, 70);
+    }
+
     return Math.min(100, Math.max(0, score));
 }
 
@@ -102,13 +111,15 @@ export interface UseCallRecorderReturn {
     transcripts: { text: string; timestamp: string; emotion: Emotion }[];
     isRecording: boolean;
     currentCallId: string | null;
-    startCall: (phoneNumber: string) => Promise<void>;
+    blockedReportCount: number | null;
+    startCall: (phoneNumber: string, force?: boolean) => Promise<void>;
     endCall: () => Promise<void>;
 }
 
 export function useCallRecorder(): UseCallRecorderReturn {
     const { trustedContacts } = useTrustedContacts();
     const [callStatus, setCallStatus] = useState<CallStatus>('idle');
+    const [blockedReportCount, setBlockedReportCount] = useState<number | null>(null);
     const [riskScore, setRiskScore] = useState(0);
     const [emotion, setEmotion] = useState<Emotion>('neutral');
     const [keywords, setKeywords] = useState<string[]>([]);
@@ -120,6 +131,8 @@ export function useCallRecorder(): UseCallRecorderReturn {
     const recognitionRef = useRef<SpeechRecognition | null>(null);
     const callIdRef = useRef<string | null>(null);
     const scoreRef = useRef(0);
+    const keywordsRef = useRef<string[]>([]);
+    const emotionRef = useRef<Emotion>('neutral');
     const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const bufferRef = useRef('');
     const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -133,11 +146,23 @@ export function useCallRecorder(): UseCallRecorderReturn {
         bufferRef.current = '';
 
         const result = await mockAnalyzeCall(text, phoneRef.current, callIdRef.current, scoreRef.current, audioBlob);
-        scoreRef.current = result.risk_score;
+        
+        const newTotalKeywords = Array.from(new Set([...keywordsRef.current, ...result.keywords]));
+        keywordsRef.current = newTotalKeywords;
 
-        setRiskScore(result.risk_score);
-        setEmotion(result.emotion);
-        setKeywords(previous => Array.from(new Set([...previous, ...result.keywords])));
+        const worstEmotions: Record<Emotion, number> = {
+            'neutral': 0, 'pressure': 1, 'urgency': 2, 'aggression': 3, 'fear': 4
+        };
+        if (worstEmotions[result.emotion] > worstEmotions[emotionRef.current]) {
+            emotionRef.current = result.emotion;
+        }
+
+        const totalScore = calculateRiskScore(keywordsRef.current, emotionRef.current, 0);
+        scoreRef.current = totalScore;
+
+        setRiskScore(totalScore);
+        setEmotion(emotionRef.current);
+        setKeywords(keywordsRef.current);
 
         if (text) {
             setTranscripts(previous => [
@@ -160,9 +185,10 @@ export function useCallRecorder(): UseCallRecorderReturn {
 
         try {
             if (!isSupabaseConfigured || !callIdRef.current || callIdRef.current.startsWith('local-')) return;
+            const status = totalScore >= 70 ? 'scam' : totalScore >= 40 ? 'suspicious' : 'safe';
             await supabase.from('calls').update({
-                risk_score: result.risk_score,
-                status: result.status,
+                risk_score: totalScore,
+                status: status,
             }).eq('id', callIdRef.current);
         } catch {
             // non-blocking
@@ -205,7 +231,7 @@ export function useCallRecorder(): UseCallRecorderReturn {
         }
     }, []);
 
-    const startCall = useCallback(async (phoneNumber: string) => {
+    const startCall = useCallback(async (phoneNumber: string, force = false) => {
         if (callStatus === 'active' || callStatus === 'connecting' || callStatus === 'trusted') return;
 
         isEndingRef.current = false;
@@ -217,9 +243,31 @@ export function useCallRecorder(): UseCallRecorderReturn {
             return;
         }
 
+        if (isSupabaseConfigured && !force) {
+            try {
+                const { data } = await supabase
+                    .from('scam_reports')
+                    .select('report_count')
+                    .eq('phone_number', phoneNumber)
+                    .single();
+                
+                if (data && data.report_count > 0) {
+                    setBlockedReportCount(data.report_count);
+                    setCallStatus('blocked');
+                    setIsRecording(false);
+                    return;
+                }
+            } catch {
+                // Ignore error, likely no rows found
+            }
+        }
+
         setCallStatus('connecting');
         phoneRef.current = phoneNumber;
         scoreRef.current = 0;
+        keywordsRef.current = [];
+        emotionRef.current = 'neutral';
+        
         setRiskScore(0);
         setEmotion('neutral');
         setKeywords([]);
@@ -362,6 +410,7 @@ export function useCallRecorder(): UseCallRecorderReturn {
         transcripts,
         isRecording,
         currentCallId,
+        blockedReportCount,
         startCall,
         endCall,
     };

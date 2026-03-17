@@ -1,6 +1,6 @@
 // Core types for VishKill
 
-export type CallStatus = 'idle' | 'connecting' | 'active' | 'ended' | 'trusted';
+export type CallStatus = 'idle' | 'connecting' | 'active' | 'ended' | 'trusted' | 'blocked';
 export type RiskLevel = 'safe' | 'suspicious' | 'scam';
 export type Emotion = 'neutral' | 'urgency' | 'fear' | 'pressure' | 'aggression';
 

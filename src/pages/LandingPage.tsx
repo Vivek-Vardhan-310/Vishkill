@@ -1,6 +1,6 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Shield, Zap, Brain, TrendingUp, ArrowRight, Phone, AlertTriangle } from 'lucide-react';
+import { Shield, Zap, Brain, TrendingUp, ArrowRight, Phone } from 'lucide-react';
 
 const FEATURES = [
     {
@@ -127,20 +127,6 @@ const LandingPage: React.FC = () => {
                 </div>
             </section>
 
-            <section className="relative pb-24 px-4">
-                <div className="max-w-4xl mx-auto">
-                    <div className="glass rounded-2xl p-6 border border-yellow-500/20 bg-yellow-500/5 flex items-start gap-4">
-                        <AlertTriangle className="w-6 h-6 text-yellow-400 shrink-0 mt-0.5" />
-                        <div>
-                            <p className="text-yellow-400 font-semibold mb-1">Demo Note</p>
-                            <p className="text-gray-400 text-sm leading-relaxed">
-                                This is a hackathon prototype. The AI analysis uses a local mock engine with scam keyword
-                                patterns. For a production build, connect a real ML model via the Supabase Edge Function.
-                            </p>
-                        </div>
-                    </div>
-                </div>
-            </section>
         </div>
     );
 };
