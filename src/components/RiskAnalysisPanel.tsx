@@ -1,21 +1,12 @@
 import React, { useEffect, useRef } from 'react';
-import { AlertTriangle, Languages, TrendingUp, Tag, Brain, FileText } from 'lucide-react';
-import type { DetectedLanguage, Emotion } from '../types';
+import { AlertTriangle, TrendingUp, Tag, Brain, FileText } from 'lucide-react';
+import type { Emotion } from '../types';
 
 interface RiskAnalysisPanelProps {
     riskScore: number;
-    spamProbability: number | null;
     emotion: Emotion;
-    detectedLanguage: DetectedLanguage;
     keywords: string[];
-    transcripts: { text: string; translatedText: string | null; detectedLanguage: DetectedLanguage; timestamp: string; emotion: Emotion; spamProbability?: number | null }[];
-}
-
-function getSpamModelConfig(score: number | null) {
-    if (score == null) return { label: 'Waiting', color: 'text-gray-400', bg: 'bg-gray-500/10 border-gray-500/20' };
-    if (score >= 0.85) return { label: 'High Scam Confidence', color: 'text-red-400', bg: 'bg-red-500/10 border-red-500/20' };
-    if (score >= 0.6) return { label: 'Suspicious', color: 'text-yellow-400', bg: 'bg-yellow-500/10 border-yellow-500/20' };
-    return { label: 'Low Scam Confidence', color: 'text-green-400', bg: 'bg-green-500/10 border-green-500/20' };
+    transcripts: { text: string; timestamp: string; emotion: Emotion }[];
 }
 
 const EMOTION_CONFIG: Record<Emotion, { label: string; color: string; bg: string }> = {
@@ -121,11 +112,10 @@ const RiskMeter: React.FC<{ score: number }> = ({ score }) => {
 };
 
 const RiskAnalysisPanel: React.FC<RiskAnalysisPanelProps> = ({
-    riskScore, spamProbability, emotion, detectedLanguage, keywords, transcripts,
+    riskScore, emotion, keywords, transcripts,
 }) => {
     const transcriptEndRef = useRef<HTMLDivElement>(null);
     const emotionCfg = EMOTION_CONFIG[emotion];
-    const spamCfg = getSpamModelConfig(spamProbability);
 
     useEffect(() => {
         transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -143,37 +133,12 @@ const RiskAnalysisPanel: React.FC<RiskAnalysisPanelProps> = ({
 
             <div className="glass rounded-2xl p-5">
                 <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3 flex items-center gap-2">
-                    <AlertTriangle className="w-4 h-4" />
-                    ONNX Spam Model
-                </h3>
-                <div className={`inline-flex items-center gap-2 px-4 py-2 rounded-full border text-sm font-semibold ${spamCfg.bg} ${spamCfg.color}`}>
-                    <span className="w-2 h-2 rounded-full bg-current" />
-                    {spamCfg.label}
-                </div>
-                <p className="text-xs text-gray-500 mt-3">
-                    {spamProbability == null ? 'No model score yet.' : `Classifier confidence: ${(spamProbability * 100).toFixed(1)}%`}
-                </p>
-            </div>
-
-            <div className="glass rounded-2xl p-5">
-                <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3 flex items-center gap-2">
                     <Brain className="w-4 h-4" />
                     Detected Emotion
                 </h3>
                 <div className={`inline-flex items-center gap-2 px-4 py-2 rounded-full border text-sm font-semibold ${emotionCfg.bg} ${emotionCfg.color}`}>
                     <span className="w-2 h-2 rounded-full bg-current" />
                     {emotionCfg.label}
-                </div>
-            </div>
-
-            <div className="glass rounded-2xl p-5">
-                <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3 flex items-center gap-2">
-                    <Languages className="w-4 h-4" />
-                    Detected Language
-                </h3>
-                <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full border text-sm font-semibold bg-cyan-500/10 border-cyan-500/20 text-cyan-300">
-                    <span className="w-2 h-2 rounded-full bg-current" />
-                    {detectedLanguage === 'unknown' ? 'Waiting for speech' : detectedLanguage === 'telugu' ? 'Telugu' : 'English'}
                 </div>
             </div>
 
@@ -216,22 +181,9 @@ const RiskAnalysisPanel: React.FC<RiskAnalysisPanelProps> = ({
                         {transcripts.map((transcript, index) => (
                             <div key={index} className="text-sm text-gray-300 bg-white/3 rounded-xl p-3 border border-white/5">
                                 <p className="leading-relaxed">&quot;{transcript.text}&quot;</p>
-                                {transcript.translatedText && transcript.translatedText !== transcript.text && (
-                                    <p className="leading-relaxed text-cyan-200 mt-2">
-                                        Translation: &quot;{transcript.translatedText}&quot;
-                                    </p>
-                                )}
                                 <div className="flex items-center gap-2 mt-1.5">
                                     <span className={`text-xs font-medium ${EMOTION_CONFIG[transcript.emotion].color}`}>
                                         {EMOTION_CONFIG[transcript.emotion].label}
-                                    </span>
-                                    {typeof transcript.spamProbability === 'number' && (
-                                        <span className="text-xs text-yellow-300">
-                                            Spam {(transcript.spamProbability * 100).toFixed(0)}%
-                                        </span>
-                                    )}
-                                    <span className="text-xs text-cyan-300 uppercase tracking-wide">
-                                        {transcript.detectedLanguage}
                                     </span>
                                     <span className="text-xs text-gray-600">
                                         {new Date(transcript.timestamp).toLocaleTimeString()}

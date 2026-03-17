@@ -7,13 +7,13 @@ export type DetectedLanguage = 'english' | 'telugu' | 'unknown';
 
 export interface AnalysisResult {
     transcript: string;
-    translated_text: string | null;
-    detected_language: DetectedLanguage;
+    translated_text?: string | null;
+    detected_language?: DetectedLanguage;
     emotion: Emotion;
     keywords: string[];
     risk_score: number;
     status: RiskLevel;
-    spam_probability?: number;
+    spam_probability?: number | null;
 }
 
 export interface CallRecord {
@@ -30,8 +30,6 @@ export interface CallTranscript {
     id: string;
     call_id: string;
     text: string;
-    translated_text: string | null;
-    detected_language: DetectedLanguage;
     timestamp: string;
     emotion: Emotion;
 }

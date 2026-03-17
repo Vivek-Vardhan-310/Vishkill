@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
 import { addNativeScamMonitorListener, isNativeScamMonitorAvailable, ScamMonitor } from '../lib/scamMonitor';
-import type { CallStatus, DetectedLanguage, Emotion } from '../types';
+import type { AnalysisResult, CallStatus, Emotion } from '../types';
 
 const SCAM_KEYWORDS = [
     'bank', 'account', 'blocked', 'arrest', 'police', 'irs', 'tax',
@@ -11,19 +11,6 @@ const SCAM_KEYWORDS = [
     'aadhaar', 'pan card', 'kyc', 'debit', 'loan', 'court',
 ];
 
-const TELUGU_TO_ENGLISH_KEYWORDS: Record<string, string> = {
-    బ్యాంక్: 'bank',
-    ఖాతా: 'account',
-    అరెస్ట్: 'arrest',
-    పోలీసులు: 'police',
-    పాస్వర్డ్: 'password',
-    ఓటీపీ: 'otp',
-    అత్యవసరం: 'urgent',
-    మోసం: 'fraud',
-    కోర్టు: 'court',
-    రుణం: 'loan',
-};
-
 const EMOTION_TRIGGERS: Record<Emotion, string[]> = {
     urgency: ['immediately', 'urgent', 'now', 'today', 'deadline', 'overdue', 'quickly'],
     fear: ['arrest', 'police', 'court', 'lawsuit', 'warrant', 'penalty', 'jail'],
@@ -32,42 +19,22 @@ const EMOTION_TRIGGERS: Record<Emotion, string[]> = {
     neutral: [],
 };
 
-function detectLanguage(text: string): DetectedLanguage {
-    if (/[\u0C00-\u0C7F]/.test(text)) return 'telugu';
-    if (/[a-z]/i.test(text)) return 'english';
-    return 'unknown';
-}
-
-function translateTeluguKeywords(text: string): string {
-    return Object.entries(TELUGU_TO_ENGLISH_KEYWORDS).reduce(
-        (translated, [source, target]) => translated.replaceAll(source, target),
-        text,
-    );
-}
-
-function getAnalysisText(transcript: string, translatedText: string | null, language: DetectedLanguage): string {
-    if (translatedText?.trim()) return translatedText;
-    if (language === 'telugu') return translateTeluguKeywords(transcript);
-    return transcript;
-}
-
 function detectEmotion(text: string): Emotion {
     const lower = text.toLowerCase();
     for (const [emotion, triggers] of Object.entries(EMOTION_TRIGGERS) as [Emotion, string[]][]) {
         if (emotion === 'neutral') continue;
-        if (triggers.some(trigger => lower.includes(trigger))) return emotion;
+        if (triggers.some(t => lower.includes(t))) return emotion;
     }
     return 'neutral';
 }
 
 function detectKeywords(text: string): string[] {
     const lower = text.toLowerCase();
-    return SCAM_KEYWORDS.filter(keyword => lower.includes(keyword));
+    return SCAM_KEYWORDS.filter(k => lower.includes(k));
 }
 
 function calculateRiskScore(keywords: string[], emotion: Emotion, base: number): number {
-    let score = base;
-    score += keywords.length * 10;
+    let score = base + keywords.length * 10;
     if (emotion === 'urgency') score += 15;
     if (emotion === 'fear') score += 20;
     if (emotion === 'pressure') score += 12;
@@ -75,14 +42,30 @@ function calculateRiskScore(keywords: string[], emotion: Emotion, base: number):
     return Math.min(100, Math.max(0, score));
 }
 
+// Call Supabase edge function for online analysis
+async function analyzeOnline(
+    transcript: string,
+    phoneNumber: string,
+    callId: string,
+): Promise<AnalysisResult | null> {
+    try {
+        if (!isSupabaseConfigured) return null;
+        const { data, error } = await supabase.functions.invoke('analyze-call', {
+            body: { transcript, phone_number: phoneNumber, call_id: callId },
+        });
+        if (!error && data) return data as AnalysisResult;
+    } catch {
+        // fall through
+    }
+    return null;
+}
+
 export interface UseCallRecorderReturn {
     callStatus: CallStatus;
     riskScore: number;
-    spamProbability: number | null;
     emotion: Emotion;
-    detectedLanguage: DetectedLanguage;
     keywords: string[];
-    transcripts: { text: string; translatedText: string | null; detectedLanguage: DetectedLanguage; timestamp: string; emotion: Emotion; spamProbability?: number | null }[];
+    transcripts: { text: string; timestamp: string; emotion: Emotion }[];
     isRecording: boolean;
     currentCallId: string | null;
     startCall: (phoneNumber: string) => Promise<void>;
@@ -90,14 +73,12 @@ export interface UseCallRecorderReturn {
 }
 
 export function useCallRecorder(): UseCallRecorderReturn {
-    const nativeMonitoringAvailable = isNativeScamMonitorAvailable();
+    const nativeAvailable = isNativeScamMonitorAvailable();
     const [callStatus, setCallStatus] = useState<CallStatus>('idle');
     const [riskScore, setRiskScore] = useState(0);
-    const [spamProbability, setSpamProbability] = useState<number | null>(null);
     const [emotion, setEmotion] = useState<Emotion>('neutral');
-    const [detectedLanguage, setDetectedLanguage] = useState<DetectedLanguage>('unknown');
     const [keywords, setKeywords] = useState<string[]>([]);
-    const [transcripts, setTranscripts] = useState<{ text: string; translatedText: string | null; detectedLanguage: DetectedLanguage; timestamp: string; emotion: Emotion; spamProbability?: number | null }[]>([]);
+    const [transcripts, setTranscripts] = useState<{ text: string; timestamp: string; emotion: Emotion }[]>([]);
     const [isRecording, setIsRecording] = useState(false);
     const [currentCallId, setCurrentCallId] = useState<string | null>(null);
 
@@ -105,43 +86,47 @@ export function useCallRecorder(): UseCallRecorderReturn {
     const callIdRef = useRef<string | null>(null);
     const scoreRef = useRef(0);
 
-    const handleNativeAnalysis = useCallback((result: {
+    const handleTranscript = useCallback(async (result: {
         transcript?: string;
-        translatedText?: string | null;
-        detectedLanguage?: string;
         emotion?: string;
         keywords?: string[];
         riskScore?: number;
-        spamProbability?: number;
         timestamp?: string;
     }) => {
         const transcript = result.transcript ?? '';
-        const lang = (result.detectedLanguage as DetectedLanguage | undefined) ?? detectLanguage(transcript);
-        const translatedText = result.translatedText ?? null;
-        const analysisText = getAnalysisText(transcript, translatedText, lang);
-        const emo = (result.emotion as Emotion | undefined) ?? detectEmotion(analysisText);
-        const kws = result.keywords?.length ? result.keywords : detectKeywords(analysisText);
-        const risk = result.riskScore ?? calculateRiskScore(kws, emo, scoreRef.current);
+        if (!transcript) return;
+
+        // Try online analysis first, fall back to local
+        const online = await analyzeOnline(transcript, phoneRef.current, callIdRef.current ?? '');
+
+        const emo = (online?.emotion ?? result.emotion as Emotion | undefined) ?? detectEmotion(transcript);
+        const kws = (online?.keywords?.length ? online.keywords : result.keywords) ?? detectKeywords(transcript);
+        const risk = online?.risk_score ?? result.riskScore ?? calculateRiskScore(kws, emo, scoreRef.current);
 
         scoreRef.current = risk;
         setRiskScore(risk);
-        setSpamProbability(result.spamProbability ?? null);
         setEmotion(emo);
-        setDetectedLanguage(lang);
         setKeywords(prev => Array.from(new Set([...prev, ...kws])));
+        setTranscripts(prev => [
+            ...prev,
+            { text: transcript, timestamp: result.timestamp ?? new Date().toISOString(), emotion: emo },
+        ]);
 
-        if (transcript) {
-            setTranscripts(prev => [
-                ...prev,
-                {
-                    text: transcript,
-                    translatedText,
-                    detectedLanguage: lang,
-                    timestamp: result.timestamp ?? new Date().toISOString(),
-                    emotion: emo,
-                    spamProbability: result.spamProbability ?? null,
-                },
-            ]);
+        // Persist to Supabase
+        try {
+            if (!isSupabaseConfigured || !callIdRef.current || callIdRef.current.startsWith('local-')) return;
+            await supabase.from('call_transcripts').insert({
+                call_id: callIdRef.current,
+                text: transcript,
+                timestamp: new Date().toISOString(),
+                emotion: emo,
+            });
+            await supabase.from('calls').update({
+                risk_score: risk,
+                status: risk >= 70 ? 'scam' : risk >= 40 ? 'suspicious' : 'safe',
+            }).eq('id', callIdRef.current);
+        } catch {
+            // non-blocking
         }
     }, []);
 
@@ -152,13 +137,30 @@ export function useCallRecorder(): UseCallRecorderReturn {
         phoneRef.current = phoneNumber;
         scoreRef.current = 0;
         setRiskScore(0);
-        setSpamProbability(null);
         setEmotion('neutral');
-        setDetectedLanguage('unknown');
         setKeywords([]);
         setTranscripts([]);
 
-        const newCallId = `local-${Date.now()}`;
+        // Create call record in Supabase
+        let newCallId = `local-${Date.now()}`;
+        try {
+            if (isSupabaseConfigured) {
+                const { data } = await supabase
+                    .from('calls')
+                    .insert({
+                        phone_number: phoneNumber,
+                        start_time: new Date().toISOString(),
+                        risk_score: 0,
+                        status: 'safe',
+                    })
+                    .select('id')
+                    .single();
+                if (data?.id) newCallId = data.id;
+            }
+        } catch {
+            // use local id
+        }
+
         callIdRef.current = newCallId;
         setCurrentCallId(newCallId);
 
@@ -191,11 +193,7 @@ export function useCallRecorder(): UseCallRecorderReturn {
         setCallStatus('ended');
         setIsRecording(false);
 
-        try {
-            await ScamMonitor.stopMonitoring();
-        } catch {
-            // ignore
-        }
+        try { await ScamMonitor.stopMonitoring(); } catch { /* ignore */ }
 
         const finalScore = scoreRef.current;
         const finalStatus = finalScore >= 70 ? 'scam' : finalScore >= 40 ? 'suspicious' : 'safe';
@@ -213,7 +211,7 @@ export function useCallRecorder(): UseCallRecorderReturn {
     }, [callStatus]);
 
     useEffect(() => {
-        if (!nativeMonitoringAvailable) return;
+        if (!nativeAvailable) return;
 
         const removers = [
             addNativeScamMonitorListener('CALL_STARTED', () => {
@@ -225,47 +223,27 @@ export function useCallRecorder(): UseCallRecorderReturn {
                 setIsRecording(false);
             }),
             addNativeScamMonitorListener('TRANSCRIPT_UPDATE', (event) => {
-                handleNativeAnalysis({
+                void handleTranscript({
                     transcript: event.transcript,
-                    translatedText: event.translatedText ?? null,
-                    detectedLanguage: event.detectedLanguage,
                     emotion: event.emotion,
                     keywords: event.keywords,
                     riskScore: event.riskScore,
-                    spamProbability: event.spamProbability,
                     timestamp: event.timestamp,
                 });
             }),
             addNativeScamMonitorListener('SCAM_ALERT', (event) => {
-                handleNativeAnalysis({
+                void handleTranscript({
                     transcript: event.transcript,
-                    translatedText: event.translatedText ?? null,
-                    detectedLanguage: event.detectedLanguage,
                     emotion: event.emotion,
                     keywords: event.keywords,
                     riskScore: event.riskScore,
-                    spamProbability: event.spamProbability,
                     timestamp: event.timestamp,
                 });
             }),
         ];
 
-        return () => {
-            removers.forEach(remove => remove());
-        };
-    }, [handleNativeAnalysis, nativeMonitoringAvailable]);
+        return () => removers.forEach(r => r());
+    }, [handleTranscript, nativeAvailable]);
 
-    return {
-        callStatus,
-        riskScore,
-        spamProbability,
-        emotion,
-        detectedLanguage,
-        keywords,
-        transcripts,
-        isRecording,
-        currentCallId,
-        startCall,
-        endCall,
-    };
+    return { callStatus, riskScore, emotion, keywords, transcripts, isRecording, currentCallId, startCall, endCall };
 }
